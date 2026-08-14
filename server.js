@@ -29,6 +29,8 @@ const ACCOUNTS_FILE = path.join(DATA_ROOT, 'accounts.json');
 const BILLING_FILE = path.join(DATA_ROOT, 'billing.json');
 const BILLING_CHECKOUTS_FILE = path.join(DATA_ROOT, 'billing-checkouts.json');
 const CONNECTIONS_FILE = path.join(DATA_ROOT, 'connections.json');
+const SHARES_FILE = path.join(DATA_ROOT, 'shares.json');
+const LINKS_FILE = path.join(DATA_ROOT, 'links.json');
 const ENCRYPTION_KEY_FILE = path.join(DATA_ROOT, 'encryption.key');
 const SYSTEM_SETTINGS_FILE = path.join(DATA_ROOT, 'system-settings.json');
 const HOST = process.env.HOST || '127.0.0.1';
@@ -76,6 +78,8 @@ let billingSettings = await loadBillingSettings();
 let billingCheckouts = await loadBillingCheckouts();
 let accounts = await loadAccounts();
 let connections = await loadConnections();
+let shares = await loadShares();
+let links = await loadLinks();
 let systemSettings = await loadSystemSettings();
 const sessions = new Map();
 const googleOAuthStates = new Map();
@@ -168,6 +172,17 @@ const server = http.createServer(async (request, response) => {
       if (request.method === 'GET' && url.pathname === '/api/connections') {
         return json(response, 200, { connections: connections.filter((item) => item.userId === user.id).map(publicConnection) });
       }
+      if (request.method === 'POST' && url.pathname === '/api/shares') {
+        verifySameOrigin(request);
+        return await createConnectionShare(request, response, user);
+      }
+      if (request.method === 'GET' && url.pathname === '/api/shares') {
+        return await listShares(response, user);
+      }
+      const shareDeleteRoute = /^\/api\/shares\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
+      if (shareDeleteRoute) {
+        if (request.method === 'DELETE') return await deleteShare(response, authenticate(request), shareDeleteRoute[1]);
+      }
       if (request.method === 'GET' && url.pathname === '/api/connections/google/start') {
         return startGoogleOAuth(response, user, url.searchParams.get('name') || 'Google Drive', url.searchParams.get('connectionId') || '');
       }
@@ -187,6 +202,7 @@ const server = http.createServer(async (request, response) => {
         if (request.method === 'PUT' && action === 'files') return await uploadRemoteFile(request, response, connection, remotePath);
         if (request.method === 'DELETE' && action === 'files') return await deleteRemoteItem(response, connection, remotePath);
         if (request.method === 'POST' && action === 'folders') return await createRemoteFolder(request, response, connection);
+        if (request.method === 'POST' && !action && url.pathname.endsWith('/share')) return await createConnectionShare(request, response, user, connection);
       }
       if (request.method === 'GET' && url.pathname === '/api/files') {
         return await listFiles(response, userRoot, url.searchParams.get('path') || '');
@@ -997,7 +1013,8 @@ function defaultBillingSettings() {
         featured: false,
         priceCents: 0,
         currency: ENV_PAYPAL_CURRENCY,
-        storageLimitBytes: MAX_STORAGE_BYTES,
+          storageLimitBytes: MAX_STORAGE_BYTES,
+          maxShareHours: 24,
       },
       paid: {
         id: 'paid',
@@ -1007,7 +1024,8 @@ function defaultBillingSettings() {
         featured: true,
         priceCents: 999,
         currency: ENV_PAYPAL_CURRENCY,
-        storageLimitBytes: 100 * 1024 ** 3,
+          storageLimitBytes: 100 * 1024 ** 3,
+          maxShareHours: 24 * 365,
       },
     },
   };
@@ -1051,6 +1069,7 @@ function normalizeBillingPlan(value, id, fallback = {}) {
     priceCents: normalizePriceCents(source.priceCents ?? source.price ?? fallback.priceCents ?? 0),
     currency: normalizeCurrencyCode(source.currency || fallback.currency || ENV_PAYPAL_CURRENCY),
     storageLimitBytes: normalizeStorageLimitBytes(source.storageLimitBytes ?? source.storageLimit ?? fallback.storageLimitBytes ?? MAX_STORAGE_BYTES),
+    maxShareHours: Number.isFinite(Number(source.maxShareHours ?? fallback.maxShareHours ?? 0)) ? Number(source.maxShareHours ?? fallback.maxShareHours ?? 0) : 0,
   };
 }
 
@@ -1196,6 +1215,134 @@ async function saveConnections() {
   const tempFile = `${CONNECTIONS_FILE}.${crypto.randomUUID()}.tmp`;
   await writeFile(tempFile, JSON.stringify({ version: 1, connections }, null, 2), { encoding: 'utf8', mode: 0o600 });
   await rename(tempFile, CONNECTIONS_FILE);
+}
+
+async function loadShares() {
+  try {
+    const data = JSON.parse(await readFile(SHARES_FILE, 'utf8'));
+    return Array.isArray(data.shares) ? data.shares : [];
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw new Error(`Could not load share links: ${error.message}`);
+  }
+}
+
+async function saveShares() {
+  const tempFile = `${SHARES_FILE}.${crypto.randomUUID()}.tmp`;
+  await writeFile(tempFile, JSON.stringify({ version: 1, shares }, null, 2), { encoding: 'utf8', mode: 0o600 });
+  await rename(tempFile, SHARES_FILE);
+}
+
+async function loadLinks() {
+  try {
+    const data = JSON.parse(await readFile(LINKS_FILE, 'utf8'));
+    return Array.isArray(data.links) ? data.links : [];
+  } catch (error) {
+    if (error.code === 'ENOENT') return [];
+    throw new Error(`Could not load local links: ${error.message}`);
+  }
+}
+
+async function saveLinks() {
+  const tempFile = `${LINKS_FILE}.${crypto.randomUUID()}.tmp`;
+  await writeFile(tempFile, JSON.stringify({ version: 1, links }, null, 2), { encoding: 'utf8', mode: 0o600 });
+  await rename(tempFile, LINKS_FILE);
+}
+
+async function createShare(request, response, url, user) {
+  const body = await readJson(request);
+  const rel = typeof body.path === 'string' ? body.path : '';
+  const expiresHours = Number(body.expiresHours || 0) || 0;
+  const { absolute } = safeStoragePath(await ensureUserRoot(user.id), rel);
+  const info = await statOr404(absolute);
+  if (!info.isFile()) throw httpError(400, 'Only files can be shared.');
+  const plan = userBillingPlan(user) || {};
+  const planMax = Number.isFinite(Number(plan.maxShareHours)) && plan.maxShareHours > 0 ? plan.maxShareHours : (plan.id === 'paid' ? 24 * 365 : 24);
+  const hours = Math.min(planMax, Math.max(1, Math.floor(expiresHours) || Math.min(24, planMax)));
+  const token = crypto.randomBytes(12).toString('base64url');
+  const share = { token, userId: user.id, path: rel, createdAt: new Date().toISOString(), expiresAt: Date.now() + hours * 3600 * 1000 };
+  shares = shares.filter((s) => s.token !== token).concat(share);
+  await saveShares();
+  return json(response, 201, { url: `${url.origin}/s/${token}`, expiresAt: new Date(share.expiresAt).toISOString() });
+}
+
+async function serveSharedFile(request, response, token) {
+  const share = shares.find((s) => s.token === token);
+  if (!share) throw httpError(404, 'Share not found.');
+  if (share.expiresAt && Date.now() > share.expiresAt) throw httpError(404, 'Share expired.');
+  const user = getAccount(share.userId);
+  const userRoot = await ensureUserRoot(user.id);
+  if (share.connectionId) {
+    const connection = connections.find((c) => c.id === share.connectionId && c.userId === user.id);
+    if (!connection) throw httpError(404, 'Shared connection not found.');
+    return await downloadRemoteFile(response, connection, share.path);
+  }
+  return await downloadFile(request, response, userRoot, share.path);
+}
+
+async function createLocalPair(request, response, url, user) {
+  const body = await readJson(request);
+  const hours = Number(body.expiresHours || 24) || 24;
+  const token = crypto.randomBytes(12).toString('base64url');
+  const link = { token, userId: user.id, createdAt: new Date().toISOString(), expiresAt: Date.now() + Math.min(24 * 30, Math.max(1, hours)) * 3600 * 1000 };
+  links = links.filter((l) => l.token !== token).concat(link);
+  await saveLinks();
+  return json(response, 201, { token, uploadUrl: `${url.origin}/api/local/upload?token=${token}` });
+}
+
+async function createConnectionShare(request, response, user, connection = null) {
+  // If connection provided, share from that external connection; otherwise expect body.connectionId
+  const body = await readJson(request);
+  const rel = typeof body.path === 'string' ? body.path : '';
+  const expiresHours = Number(body.expiresHours || 0) || 0;
+  let connectionId = connection ? connection.id : (typeof body.connectionId === 'string' ? body.connectionId : '');
+  if (connectionId && !connection) connection = connections.find((c) => c.id === connectionId && c.userId === user.id);
+  if (connectionId && !connection) throw httpError(404, 'Connection not found.');
+  if (connection) {
+    // validate path exists by attempting to list/download
+    try { await providerList(connection, normalizeRemotePath(rel)); } catch (err) { throw httpError(400, `Could not access remote path: ${err.message}`); }
+  } else {
+    const { absolute } = safeStoragePath(await ensureUserRoot(user.id), rel);
+    const info = await statOr404(absolute);
+    if (!info.isFile()) throw httpError(400, 'Only files can be shared.');
+  }
+  const plan = userBillingPlan(user) || {};
+  const planMax = Number.isFinite(Number(plan.maxShareHours)) && plan.maxShareHours > 0 ? plan.maxShareHours : (plan.id === 'paid' ? 24 * 365 : 24);
+  const hours = Math.min(planMax, Math.max(1, Math.floor(expiresHours) || Math.min(24, planMax)));
+  const token = crypto.randomBytes(12).toString('base64url');
+  const share = { token, userId: user.id, path: rel, connectionId: connection ? connection.id : null, createdAt: new Date().toISOString(), expiresAt: Date.now() + hours * 3600 * 1000 };
+  shares = shares.filter((s) => s.token !== token).concat(share);
+  await saveShares();
+  return json(response, 201, { token, url: `${new URL(request.url, `http://${request.headers.host}`).origin}/s/${token}`, expiresAt: new Date(share.expiresAt).toISOString() });
+}
+
+async function listShares(response, user) {
+  const userShares = shares.filter((s) => s.userId === user.id).map((s) => ({ token: s.token, path: s.path, connectionId: s.connectionId, createdAt: s.createdAt, expiresAt: s.expiresAt }));
+  return json(response, 200, { shares: userShares });
+}
+
+async function deleteShare(response, user, token) {
+  const share = shares.find((s) => s.token === token);
+  if (!share) throw httpError(404, 'Share not found.');
+  if (share.userId !== user.id && user.role !== 'admin') throw httpError(403, 'Not allowed.');
+  shares = shares.filter((s) => s.token !== token);
+  await saveShares();
+  response.writeHead(204);
+  response.end();
+}
+
+async function uploadLocalByToken(request, response, url) {
+  const token = url.searchParams.get('token') || '';
+  const rel = url.searchParams.get('path') || '';
+  if (!token) throw httpError(400, 'Token is required.');
+  const link = links.find((l) => l.token === token);
+  if (!link) throw httpError(404, 'Invalid token.');
+  if (link.expiresAt && Date.now() > link.expiresAt) throw httpError(404, 'Token expired.');
+  const user = getAccount(link.userId);
+  if (user.status === 'suspended') throw httpError(403, 'Account suspended.');
+  const userRoot = await ensureUserRoot(user.id);
+  // reuse uploadFile flow but without session authentication
+  return await uploadFile(request, response, url, userRoot, userStorageLimit(user));
 }
 
 async function loadSystemSettings() {

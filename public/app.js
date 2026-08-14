@@ -29,6 +29,8 @@ const elements = {
   accountMenu: $('#account-menu'),
   accountName: $('#account-name'),
   adminPanelButton: $('#admin-panel-button'),
+  manageSharesButton: $('#manage-shares-button'),
+  localPairButton: $('#local-pair-button'),
   adminView: $('#admin-view'),
   adminExit: $('#admin-exit-button'),
   adminRefresh: $('#admin-refresh'),
@@ -214,6 +216,8 @@ document.addEventListener('click', () => {
   elements.accountButton.setAttribute('aria-expanded', 'false');
 });
 elements.adminPanelButton.addEventListener('click', openAdminPanel);
+elements.localPairButton.addEventListener('click', requestLocalPairing);
+elements.manageSharesButton.addEventListener('click', openSharesDialog);
 elements.adminExit.addEventListener('click', showDashboard);
 elements.adminRefresh.addEventListener('click', loadAdminData);
 elements.googleSystemSettingsForm.addEventListener('submit', saveGoogleSystemSettings);
@@ -527,11 +531,13 @@ function renderAdminBillingSettings(billing) {
   elements.billingFreeName.value = freePlan.name || 'Free';
   elements.billingFreeDescription.value = freePlan.description || '';
   elements.billingFreeStorage.value = formatGigabytes(freePlan.storageLimitBytes);
+  elements.billingFreeShareHours.value = String(freePlan.maxShareHours || 24);
   elements.billingPaidActive.checked = Boolean(paidPlan.active);
   elements.billingPaidName.value = paidPlan.name || 'Pro';
   elements.billingPaidDescription.value = paidPlan.description || '';
   elements.billingPaidPrice.value = formatCurrencyInput(paidPlan.priceCents);
   elements.billingPaidStorage.value = formatGigabytes(paidPlan.storageLimitBytes);
+  elements.billingPaidShareHours.value = String(paidPlan.maxShareHours || 24 * 365);
   elements.billingPaidFeatured.checked = Boolean(paidPlan.featured);
   elements.billingSettingsError.hidden = true;
 }
@@ -562,6 +568,7 @@ async function saveBillingSettings(event) {
             priceCents: 0,
             currency,
             storageLimitBytes: parseGigabytes(elements.billingFreeStorage.value, 'Free plan storage limit'),
+            maxShareHours: Number(elements.billingFreeShareHours.value) || 24,
           },
           paid: {
             name: elements.billingPaidName.value.trim(),
@@ -571,6 +578,7 @@ async function saveBillingSettings(event) {
             priceCents: parseCurrencyCents(elements.billingPaidPrice.value, 'Paid plan price'),
             currency,
             storageLimitBytes: parseGigabytes(elements.billingPaidStorage.value, 'Paid plan storage limit'),
+            maxShareHours: Number(elements.billingPaidShareHours.value) || 24 * 365,
           },
         },
       }),
@@ -1412,8 +1420,80 @@ function createFileRow(item) {
   menu.setAttribute('aria-label', `Delete ${item.name}`);
   menu.textContent = '×';
   menu.addEventListener('click', () => deleteItem(item));
+  const share = document.createElement('button');
+  share.type = 'button';
+  share.className = 'menu-button';
+  share.title = `Share ${item.name}`;
+  share.setAttribute('aria-label', `Share ${item.name}`);
+  share.textContent = '⤓';
+  share.addEventListener('click', () => createShare(item));
   row.append(nameButton, size, date, menu);
+  if (item.type === 'file') row.append(share);
   return row;
+}
+
+async function createShare(item) {
+  try {
+    const response = await api('/api/files/share', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: item.path }),
+    });
+    const data = await response.json();
+    navigator.clipboard?.writeText(data.url).catch(() => {});
+    prompt('Public link (copied to clipboard):', data.url);
+  } catch (error) { handleApiError(error); }
+}
+
+async function requestLocalPairing() {
+  try {
+    const response = await api('/api/local/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+    const data = await response.json();
+    navigator.clipboard?.writeText(data.token).catch(() => {});
+    prompt('Pairing token (copied to clipboard). Use this on your device:', data.token + '\nUpload URL: ' + data.uploadUrl);
+  } catch (error) { handleApiError(error); }
+}
+
+// Shares management UI
+async function openSharesDialog() {
+  let dialog = document.getElementById('shares-dialog');
+  if (!dialog) {
+    dialog = document.createElement('dialog');
+    dialog.id = 'shares-dialog';
+    dialog.innerHTML = `<button class="dialog-close" type="button" aria-label="Close">×</button><div class="connection-dialog-head"><p class="eyebrow">Shared links</p><h2>Manage your public links</h2></div><div id="shares-list"></div><div style="margin-top:12px"><button class="button" id="close-shares">Close</button></div>`;
+    document.body.appendChild(dialog);
+    dialog.querySelector('.dialog-close').addEventListener('click', () => dialog.close());
+    dialog.querySelector('#close-shares').addEventListener('click', () => dialog.close());
+  }
+  dialog.showModal();
+  await loadShares();
+}
+
+async function loadShares() {
+  try {
+    const data = await (await api('/api/shares')).json();
+    const list = document.getElementById('shares-list');
+    list.replaceChildren(...(data.shares || []).map((s) => {
+      const item = document.createElement('div');
+      item.className = 'share-row';
+      const info = document.createElement('div');
+      info.textContent = `${s.path || '(remote)'} — expires ${new Date(s.expiresAt).toLocaleString()}`;
+      const revoke = document.createElement('button');
+      revoke.type = 'button';
+      revoke.className = 'button ghost';
+      revoke.textContent = 'Revoke';
+      revoke.addEventListener('click', async () => { await revokeShare(s.token); });
+      item.append(info, revoke);
+      return item;
+    }));
+  } catch (error) { handleApiError(error); }
+}
+
+async function revokeShare(token) {
+  if (!confirm('Revoke this public link?')) return;
+  try {
+    await api(`/api/shares/${encodeURIComponent(token)}`, { method: 'DELETE' });
+    await loadShares();
+    showToast('Share revoked');
+  } catch (error) { handleApiError(error); }
 }
 
 async function uploadFiles(files) {

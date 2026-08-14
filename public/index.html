@@ -31,6 +31,8 @@
         </button>
         <div class="account-menu" id="account-menu" hidden>
           <button id="admin-panel-button" type="button" hidden>Admin panel</button>
+          <button id="manage-shares-button" type="button">Manage shares</button>
+          <button id="local-pair-button" type="button">Link device</button>
           <button id="sign-out-button" type="button">Sign out</button>
         </div>
       </div>
@@ -214,7 +216,8 @@
                   <div class="billing-plan-fields">
                     <label>Name<input id="billing-free-name" type="text" maxlength="120" required></label>
                     <label>Description<textarea id="billing-free-description" rows="3" maxlength="280" required></textarea></label>
-                    <label>Storage limit (GB)<input id="billing-free-storage" type="number" min="0.001" max="1048576" step="0.1" required></label>
+                      <label>Storage limit (GB)<input id="billing-free-storage" type="number" min="0.001" max="1048576" step="0.1" required></label>
+                      <label>Max share expiry (hours)<input id="billing-free-share-hours" type="number" min="1" max="876000" step="1" required></label>
                   </div>
                 </article>
                 <article class="billing-plan-editor-card">
@@ -224,6 +227,7 @@
                     <label>Description<textarea id="billing-paid-description" rows="3" maxlength="280" required></textarea></label>
                     <label>Price (USD)<input id="billing-paid-price" type="number" min="0.01" max="1000000" step="0.01" required></label>
                     <label>Storage limit (GB)<input id="billing-paid-storage" type="number" min="0.001" max="1048576" step="0.1" required></label>
+                    <label>Max share expiry (hours)<input id="billing-paid-share-hours" type="number" min="1" max="876000" step="1" required></label>
                     <label class="billing-flag wide"><input id="billing-paid-featured" type="checkbox" checked> Featured plan</label>
                   </div>
                 </article>

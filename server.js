@@ -181,6 +181,10 @@ const server = http.createServer(async (request, response) => {
         verifySameOrigin(request);
         return await createLocalPair(request, response, url, user);
       }
+      if (request.method === 'GET' && url.pathname === '/api/local/windows-helper') {
+        // Return a personalized PowerShell helper script to upload files using the pairing upload URL
+        return await generateWindowsHelper(request, response, url, user);
+      }
       if (request.method === 'POST' && url.pathname === '/api/billing/plan') {
         verifySameOrigin(request);
         return await setBillingPlan(request, response, user);
@@ -1297,7 +1301,25 @@ async function serveSharedFile(request, response, token) {
     if (!connection) throw httpError(404, 'Shared connection not found.');
     return await downloadRemoteFile(response, connection, share.path);
   }
+  // If the client requested HTML or no download param, show a download page with metadata and a download button.
+  const url = new URL(request.url, `http://${request.headers.host}`);
+  const dl = url.searchParams.get('dl') || url.searchParams.get('download');
+  if (!dl && (request.headers.accept || '').includes('text/html')) {
+    // prepare metadata
+    const absolute = path.join(userRoot, share.path || '');
+    let baseName = path.posix.basename(share.path || 'file');
+    try { const st = await stat(absolute); if (!st.isFile()) throw new Error('not a file'); } catch (e) { /* ignore */ }
+    const expiresAt = share.expiresAt ? new Date(share.expiresAt).toISOString() : '';
+    const owner = user.name || user.email || user.id;
+    const page = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Download ${escapeHtml(baseName)}</title><style>body{font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial;margin:24px}button{background:#345;border:0;color:#fff;padding:12px 18px;border-radius:8px;font-size:16px}a{color:#145}small{color:#666;display:block;margin-top:8px}</style></head><body><h1>Download ${escapeHtml(baseName)}</h1><p>From: ${escapeHtml(owner)}</p><p>Expires: ${escapeHtml(expiresAt)}</p><p><a href="/s/${token}?dl=1"><button type="button">Download</button></a></p><p><small>If the button does not work, use this link: <a href="/s/${token}?dl=1">/s/${token}?dl=1</a></small></p></body></html>`;
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return response.end(page);
+  }
   return await downloadFile(request, response, userRoot, share.path);
+}
+
+function escapeHtml(str) {
+  return String(str || '').replace(/[&<>"']/g, (s) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s]));
 }
 
 async function createLocalPair(request, response, url, user) {
@@ -1309,6 +1331,41 @@ async function createLocalPair(request, response, url, user) {
   links = links.filter((l) => l.token !== token).concat(link);
   await saveLinks();
   return json(response, 201, { token, uploadUrl: `${url.origin}/api/local/upload?token=${token}` });
+}
+
+async function generateWindowsHelper(request, response, url, user) {
+  // create a short-lived upload token similar to createLocalPair
+  const hours = 24;
+  const token = crypto.randomBytes(12).toString('base64url');
+  const link = { token, userId: user.id, createdAt: new Date().toISOString(), expiresAt: Date.now() + Math.min(24 * 30, Math.max(1, hours)) * 3600 * 1000 };
+  links = links.filter((l) => l.token !== token).concat(link);
+  await saveLinks();
+  const uploadUrl = `${url.origin}/api/local/upload?token=${token}`;
+
+  const script = `# SavelyCLOUD Windows helper (PowerShell)
+# Usage: Save this file as upload.ps1 and run ` + "`" + `.
+# Example: .\upload.ps1 -FilePath 'C:\path\to\file.txt'
+param(
+  [Parameter(Mandatory=$false)][string]$FilePath
+)
+if (-not $FilePath) {
+  Write-Host "No file path provided. Example: .\upload.ps1 -FilePath 'C:\\path\\to\\file.txt'"
+  exit 0
+}
+Write-Host "Uploading $FilePath to SavelyCLOUD..."
+try {
+  $resp = Invoke-RestMethod -Uri '${uploadUrl}&path=' + [System.Web.HttpUtility]::UrlEncode([System.IO.Path]::GetFileName($FilePath)) -Method Put -InFile $FilePath -ContentType 'application/octet-stream'
+  Write-Host "Upload complete"
+} catch {
+  Write-Host "Upload failed: $_"
+  exit 1
+}
+`;
+
+  // send as attachment
+  response.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  response.setHeader('Content-Disposition', `attachment; filename="savelycloud-windows-helper-${user.id}.ps1"`);
+  response.end(script);
 }
 
 async function createConnectionShare(request, response, user, connection = null) {

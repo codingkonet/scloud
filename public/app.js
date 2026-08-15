@@ -31,6 +31,7 @@ const elements = {
   adminPanelButton: $('#admin-panel-button'),
   manageSharesButton: $('#manage-shares-button'),
   localPairButton: $('#local-pair-button'),
+  localWindowsLink: $('#local-windows-link'),
   adminView: $('#admin-view'),
   adminExit: $('#admin-exit-button'),
   adminRefresh: $('#admin-refresh'),
@@ -217,6 +218,7 @@ document.addEventListener('click', () => {
 });
 elements.adminPanelButton.addEventListener('click', openAdminPanel);
 elements.localPairButton.addEventListener('click', requestLocalPairing);
+elements.localWindowsLink.addEventListener('click', requestWindowsHelper);
 elements.manageSharesButton.addEventListener('click', openSharesDialog);
 elements.adminExit.addEventListener('click', showDashboard);
 elements.adminRefresh.addEventListener('click', loadAdminData);
@@ -628,7 +630,13 @@ async function saveBillingSettings(event) {
 async function loadBillingData() {
   try {
     const data = await (await api('/api/billing/plans')).json();
-    state.billingPlans = data.plans || [];
+    // Hide paid plan from public dashboard; keep free plan and show current plan if user already has another plan
+    const allPlans = data.plans || [];
+    const freePlan = allPlans.find(p => p.id === 'free');
+    const visiblePlans = [];
+    if (freePlan) visiblePlans.push(freePlan);
+    if (data.currentPlanId && data.currentPlanId !== 'free' && data.currentPlan) visiblePlans.push(data.currentPlan);
+    state.billingPlans = visiblePlans;
     state.billingCurrentPlanId = data.currentPlanId || 'free';
     state.billingCurrentPlan = data.currentPlan || null;
     state.billingPaypalConfigured = Boolean(data.paypalConfigured);
@@ -1477,6 +1485,24 @@ async function requestLocalPairing() {
     const data = await response.json();
     navigator.clipboard?.writeText(data.token).catch(() => {});
     prompt('Pairing token (copied to clipboard). Use this on your device:', data.token + '\nUpload URL: ' + data.uploadUrl);
+  } catch (error) { handleApiError(error); }
+}
+
+async function requestWindowsHelper() {
+  try {
+    const response = await api('/api/local/windows-helper');
+    if (!response.ok) throw new Error('Could not generate Windows helper');
+    const scriptText = await response.text();
+    const blob = new Blob([scriptText], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `savelycloud-windows-helper.ps1`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    showToast('Windows helper downloaded');
   } catch (error) { handleApiError(error); }
 }
 

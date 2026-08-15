@@ -73,6 +73,17 @@ The CI workflow will:
 - Create a GitHub Release and attach the artifact (if download succeeds).
 - If `PLAY_STORE_PACKAGE_NAME` and `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` are provided, the workflow will also upload the AAB to the Play Store.
 
+Tag-triggered publishing
+
+Push a tag matching `v*` (for example `v1.2.0`) to trigger the tag-release workflow that will build and publish directly to the Play Store. The tag workflow is defined at [.github/workflows/eas-release.yml](.github/workflows/eas-release.yml).
+
+Recommended flow:
+- Create a changelog entry and bump version in your app.
+- Tag the commit: `git tag -a v1.2.0 -m "Release v1.2.0"`
+- Push the tag: `git push origin v1.2.0`
+
+The tag workflow requires the same secrets as above and will publish to the `production` track by default.
+
 How it works:
 - The workflow checks out the repo, installs Node and `eas-cli`, and runs `eas build` in `mobile/` using the `production` profile.
 - EAS will prompt for credentials only if needed; with `--non-interactive` it uses stored or pre-configured credentials in your Expo account.

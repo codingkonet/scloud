@@ -55,3 +55,17 @@ Notes:
 - For Play Store uploads use the generated AAB; for local installs use the APK.
 - If you need a signed release with your own keystore, supply the keystore details when prompted or use `eas credentials`.
 
+CI / GitHub Actions
+
+This repo includes a GitHub Actions workflow that triggers EAS builds when `mobile/` files change or when manually dispatched:
+
+- Workflow path: [.github/workflows/eas-build.yml](.github/workflows/eas-build.yml)
+
+Required repository secrets:
+- `EXPO_TOKEN` — an Expo access token (create with `eas login` or from your Expo account settings).
+
+How it works:
+- The workflow checks out the repo, installs Node and `eas-cli`, and runs `eas build` in `mobile/` using the `production` profile.
+- EAS will prompt for credentials only if needed; with `--non-interactive` it uses stored or pre-configured credentials in your Expo account.
+
+

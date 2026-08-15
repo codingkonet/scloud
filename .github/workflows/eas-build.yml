@@ -1,0 +1,46 @@
+name: EAS Android Build
+
+on:
+  push:
+    paths:
+      - 'mobile/**'
+  workflow_dispatch:
+
+jobs:
+  eas-build-android:
+    name: EAS Build (Android)
+    runs-on: ubuntu-latest
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: |
+          cd mobile
+          npm ci
+
+      - name: Install EAS CLI
+        run: npm install -g eas-cli
+
+      - name: Show EAS auth status
+        run: |
+          eas whoami || echo "Not logged in (EXPO_TOKEN may be missing)"
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Run EAS build (production AAB)
+        run: |
+          cd mobile
+          eas build -p android --profile production --non-interactive
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Build finished
+        run: echo "EAS build finished; check EAS dashboard or workflow logs for artifact URL."

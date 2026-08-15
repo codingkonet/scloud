@@ -395,6 +395,9 @@ async function submitAuth(event) {
   elements.authSubmit.disabled = true;
   elements.authSubmit.textContent = state.authMode === 'register' ? 'Creating account…' : 'Signing in…';
   try {
+    if (state.authMode === 'register' && !elements.authPlan) {
+      throw new Error('Internal error: plan selector not found');
+    }
     const payload = {
       email: elements.authEmail.value,
       password: elements.authPassword.value,
@@ -548,6 +551,31 @@ async function saveBillingSettings(event) {
   elements.billingSettingsSave.disabled = true;
   elements.billingSettingsSave.textContent = 'Saving???';
   try {
+    // Ensure required elements are present to avoid obscure runtime errors
+    const required = [
+      ['billingPaypalCurrency', elements.billingPaypalCurrency],
+      ['billingPaypalClientId', elements.billingPaypalClientId],
+      ['billingPaypalClientSecret', elements.billingPaypalClientSecret],
+      ['billingPaypalEnvironment', elements.billingPaypalEnvironment],
+      ['billingFreeName', elements.billingFreeName],
+      ['billingFreeDescription', elements.billingFreeDescription],
+      ['billingFreeStorage', elements.billingFreeStorage],
+      ['billingFreeShareHours', elements.billingFreeShareHours],
+      ['billingPaidName', elements.billingPaidName],
+      ['billingPaidDescription', elements.billingPaidDescription],
+      ['billingPaidPrice', elements.billingPaidPrice],
+      ['billingPaidStorage', elements.billingPaidStorage],
+      ['billingPaidShareHours', elements.billingPaidShareHours],
+      ['billingPaidActive', elements.billingPaidActive],
+      ['billingPaidFeatured', elements.billingPaidFeatured],
+    ];
+    for (const [name, el] of required) {
+      if (!el) {
+        elements.billingSettingsError.textContent = `Internal error: missing element ${name}`;
+        elements.billingSettingsError.hidden = false;
+        throw new Error(`Missing element ${name}`);
+      }
+    }
     const currency = elements.billingPaypalCurrency.value.trim().toUpperCase();
     const response = await api('/api/admin/billing', {
       method: 'PATCH',

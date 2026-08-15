@@ -90,6 +90,26 @@ h1 { margin: 0; max-width: 700px; font-family: Georgia, "Times New Roman", serif
 .billing-head p { margin: 4px 0 0; color: var(--muted); }
 .billing-current-plan { flex: none; padding: 6px 10px; border-radius: 99px; background: #e2eadb; color: #567044; font-size: 10px; font-weight: 800; text-transform: uppercase; white-space: nowrap; }
 .billing-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; }
+
+/* Mobile adjustments for billing plans */
+@media (max-width: 850px) {
+  .billing-grid { grid-template-columns: 1fr; }
+  .billing-plan-card { padding: 16px; }
+  .billing-plan-card-head h3 { font-size: 22px; }
+  .billing-plan-card-head strong { font-size: 16px; }
+  .billing-plan-actions { justify-content: stretch; }
+  .billing-plan-actions .button { width: 100%; min-width: 0; }
+  .billing-badge { margin-left: 8px; }
+}
+
+@media (max-width: 620px) {
+  .billing-head { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .billing-current-plan { margin-top: 6px; }
+  .billing-plan-card-head h3 { font-size: 20px; }
+  .billing-plan-details li { font-size: 13px; }
+  .billing-plan-card { gap: 12px; padding: 14px; }
+  .billing-plan-actions .button { padding: 12px; }
+}
 .billing-plan-card { display: grid; gap: 15px; padding: 20px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); }
 .billing-plan-card.featured { border-color: rgba(217, 91, 55, .35); box-shadow: 0 12px 30px rgba(52, 49, 39, .08); }
 .billing-plan-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }

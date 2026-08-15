@@ -22,6 +22,7 @@ async function main() {
       method: 'PUT',
       headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': String(stat.size) },
       body: stream,
+      duplex: 'half',
     });
     if (!res.ok) {
       console.error('Upload failed', res.status, await res.text());

@@ -90,8 +90,11 @@ const server = http.createServer(async (request, response) => {
 
   try {
     const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
+    console.log('REQ', request.method, url.pathname);
 
     if (url.pathname === '/health') return json(response, 200, { status: 'ok' });
+
+    if (request.method === 'GET' && url.pathname.startsWith('/s/')) return await serveSharedFile(request, response, url.pathname.slice(3));
 
     if (request.method === 'GET' && url.pathname === '/api/connections/google/callback') {
       return await finishGoogleOAuth(response, url);
@@ -115,13 +118,26 @@ const server = http.createServer(async (request, response) => {
       verifySameOrigin(request);
       return logoutAccount(request, response);
     }
+    if (request.method === 'POST' && url.pathname === '/api/files/share') {
+      verifySameOrigin(request);
+      const user = authenticate(request);
+      return await createShare(request, response, url, user);
+    }
     if (request.method === 'GET' && url.pathname === '/api/auth/me') {
       const user = authenticate(request);
       return json(response, 200, { user: publicUser(user) });
     }
 
     if (url.pathname.startsWith('/api/')) {
-      const user = authenticate(request);
+      console.log('Entering /api/ block for', url.pathname);
+      let user = null;
+      try {
+        user = authenticate(request);
+        console.log('Authenticated user', user.id);
+      } catch (err) {
+        console.log('No authenticated user for', url.pathname, 'error', err.message);
+        throw err;
+      }
       const userRoot = await ensureUserRoot(user.id);
       if (request.method !== 'GET' && request.method !== 'HEAD') verifySameOrigin(request);
 
@@ -160,6 +176,10 @@ const server = http.createServer(async (request, response) => {
       }
       if (request.method === 'GET' && url.pathname === '/api/billing/plans') {
         return billingPlans(response, user);
+      }
+      if (request.method === 'POST' && url.pathname === '/api/local/pair') {
+        verifySameOrigin(request);
+        return await createLocalPair(request, response, url, user);
       }
       if (request.method === 'POST' && url.pathname === '/api/billing/plan') {
         verifySameOrigin(request);
@@ -1281,6 +1301,7 @@ async function serveSharedFile(request, response, token) {
 }
 
 async function createLocalPair(request, response, url, user) {
+  console.log('createLocalPair invoked for', user.id);
   const body = await readJson(request);
   const hours = Number(body.expiresHours || 24) || 24;
   const token = crypto.randomBytes(12).toString('base64url');

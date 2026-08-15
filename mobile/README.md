@@ -64,6 +64,15 @@ This repo includes a GitHub Actions workflow that triggers EAS builds when `mobi
 Required repository secrets:
 - `EXPO_TOKEN` — an Expo access token (create with `eas login` or from your Expo account settings).
 
+Optional secrets for automated releases:
+- `PLAY_STORE_PACKAGE_NAME` — the Android package name (e.g. com.example.app).
+- `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` — JSON contents of a Google Play service account (for Play Store upload).
+
+The CI workflow will:
+- Run an EAS build and attempt to download the generated artifact.
+- Create a GitHub Release and attach the artifact (if download succeeds).
+- If `PLAY_STORE_PACKAGE_NAME` and `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` are provided, the workflow will also upload the AAB to the Play Store.
+
 How it works:
 - The workflow checks out the repo, installs Node and `eas-cli`, and runs `eas build` in `mobile/` using the `production` profile.
 - EAS will prompt for credentials only if needed; with `--non-interactive` it uses stored or pre-configured credentials in your Expo account.

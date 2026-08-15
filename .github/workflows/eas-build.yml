@@ -35,12 +35,41 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
-      - name: Run EAS build (production AAB)
+      - name: Run EAS build (production AAB) and capture build id
         run: |
           cd mobile
-          eas build -p android --profile production --non-interactive
+          npm install -g jq || true
+          BUILD_JSON=$(eas build -p android --profile production --non-interactive --wait --json)
+          echo "$BUILD_JSON" > build-info.json
+          BUILD_ID=$(echo "$BUILD_JSON" | jq -r '.id // .buildId // .data.id')
+          echo "BUILD_ID=$BUILD_ID" >> $GITHUB_ENV
+          echo "Saved build id $BUILD_ID"
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
-      - name: Build finished
-        run: echo "EAS build finished; check EAS dashboard or workflow logs for artifact URL."
+      - name: Download EAS build artifact
+        run: |
+          cd mobile
+          if [ -z "$BUILD_ID" ] || [ "$BUILD_ID" = "null" ]; then
+            echo "No build id found; skipping download"
+            exit 0
+          fi
+          set -e
+          # Try to download as AAB first, fallback to APK
+          eas build:download --platform android --id "$BUILD_ID" --output artifact.aab || true
+          eas build:download --platform android --id "$BUILD_ID" --output artifact.apk || true
+          ls -la
+
+      - name: Create GitHub Release and upload artifact
+        uses: ncipollo/release-action@v1
+        with:
+          tag: build-${{ github.run_number }}
+          files: mobile/artifact.*
+
+      - name: Upload to Play Store (optional)
+        if: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON != '' && secrets.PLAY_STORE_PACKAGE_NAME != '' }}
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ${{ secrets.PLAY_STORE_PACKAGE_NAME }}
+          releaseFiles: mobile/artifact.aab
